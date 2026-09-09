@@ -64,3 +64,11 @@ def parse_user_network(username, driver, to_parse_users=set(), parsed_users=set(
         users.update(page_users)
     
     return users
+
+def discover_users(
+        driver,
+        users_schedule: set[str],
+        users_listed: set[str],
+        max_users: int=1000
+):
+    pass
