@@ -48,7 +48,7 @@ def parse_user_network(username, driver, to_parse_users=set(), parsed_users=set(
         soup = get_soup(following_url, driver)
         page_users = parse_network_page(soup)
         page_users = list(filter(lambda x: not(x in to_parse_users or x in parsed_users), page_users))
-        users.extend(page_users)
+        users.update(page_users)
 
     #Теперь смотрим всех, кто подписан на пользователя
     page = 1
@@ -61,6 +61,6 @@ def parse_user_network(username, driver, to_parse_users=set(), parsed_users=set(
         soup = get_soup(following_url, driver)
         page_users = parse_network_page(soup)
         page_users = list(filter(lambda x: not(x in to_parse_users or x in parsed_users), page_users))
-        users.extend(page_users)
+        users.update(page_users)
     
     return users
