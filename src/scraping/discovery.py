@@ -1,6 +1,7 @@
 from scripts.scrape_utils import *
 from scripts.scrape_users import *
 from bs4 import BeautifulSoup
+from selenium.webdriver.remote.webdriver import WebDriver
 import time
 
 
@@ -69,6 +70,53 @@ def discover_users(
         driver,
         users_schedule: set[str],
         users_listed: set[str],
-        max_users: int=1000
+        max_users: int=1000,
+        save_every = 10,
+        on_checkpoint = None
 ):
-    pass
+    '''
+    Прохождение по сети юзеров с записью в документы.
+
+    Parameters:      
+    '''
+    processed = 0
+
+    while users_schedule and processed < max_users:
+        username = users_schedule.pop()
+
+        if username in users_listed:
+            continue
+
+        print(f"[{processed + 1}/{max_users}] Exploring {username}")
+
+        try:
+            discovered_users = parse_user_network(
+                username=username,
+                driver=driver,
+                to_parse_users=users_schedule,
+                parsed_users=users_listed
+            )
+        except Exception as exc:
+            print(f"Failed to explore {username}: {exc}")
+            # continue
+
+        users_listed.add(username)
+
+        new_users = discovered_users.difference(users_listed)
+        new_users.difference_update(users_schedule)
+        users_schedule.update(new_users)
+
+        processed += 1
+
+        print(
+            f"Found {len(new_users)} new users. \n Queue: {len(users_schedule)} \n Explored: {len(users_listed)}" 
+        )
+
+        if (on_checkpoint is not None and processed % save_every == 0):
+            on_checkpoint(users_schedule, users_listed)
+
+    if on_checkpoint is not None:
+        on_checkpoint(users_schedule, users_listed)
+
+    return users_schedule, users_listed
+
