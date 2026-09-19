@@ -14,37 +14,69 @@ DB_PATH = "filmatch/data/parsed_data.db"
 
 MAX_ITERS = 10_000
 
-def insert_rating(rating, cursor):
-    sql_query = '''
-    INSERT INTO Ratings(user, liked, film, reviewed, rating)
-    VALUES (?, ?, ?, ?, ?)
-    '''
-    cursor.execute(sql_query, (
-        rating.get("user"),
-        rating.get("liked"),
-        rating.get("film"),
-        rating.get("reviewed"),
-        rating.get("rating")
-    ))
+def insert_ratings(
+    ratings: list[dict],
+    db_path: Path | str,
+) -> None:
 
-def insert_user(user, cursor):
-    sql_query = f'''
-    INSERT INTO Users(username, status, display_name, geo, films, thisyear, lists, following, followers, favorities)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    '''
+    if not ratings:
+        return
+
+    query = """
+        INSERT INTO Ratings (
+            user,
+            liked,
+            film,
+            reviewed,
+            rating
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """
+
+    values = [
+        (
+            rating["user"],
+            rating["liked"],
+            rating["film"],
+            rating["reviewed"],
+            rating["rating"],
+        )
+        for rating in ratings
+    ]
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(query, values)
+
+def insert_user(
+    user: dict,
+    db_path: Path | str,
+) -> None:
+
+    query = """
+        INSERT INTO Users (
+            username,
+            status,
+            display_name,
+            geo,
+            films,
+            thisyear,
+            lists,
+            following,
+            followers,
+            favorities
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
     geo = user.get("geo")
-    if geo:
-        if len(geo) == 1:
-            geo = geo[0]
-        else:
-            geo = ", ".join(geo)
-    favorities = user.get("favorities")
-    if favorities:
-        if len(favorities) == 1:
-            favorities = favorities[0]
-        else:
-            favorities = ", ".join(favorities)
-    cursor.execute(sql_query, (
+    if isinstance(geo, list):
+        geo = ", ".join(geo)
+
+    favorites = user.get("favorities")
+    if isinstance(favorites, list):
+        favorites = ", ".join(favorites)
+
+    values = (
         user.get("username"),
         user.get("status"),
         user.get("display_name"),
@@ -54,8 +86,11 @@ def insert_user(user, cursor):
         user.get("Lists"),
         user.get("Following"),
         user.get("Followers"),
-        favorities
-    ))
+        favorites,
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(query, values)
 
 db_exists = os.path.exists(DB_PATH)
 
@@ -89,3 +124,20 @@ def initialize_db(db_path):
         db.commit()
         db.close()
         print("tables has created")
+
+def save_user_data(
+    user,
+    ratings,
+    db_path,
+):
+    with sqlite3.connect(db_path) as conn:
+
+        insert_user(
+            conn=conn,
+            user=user,
+        )
+
+        insert_ratings(
+            conn=conn,
+            ratings=ratings,
+        )
