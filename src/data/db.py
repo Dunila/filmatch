@@ -1,78 +1,165 @@
+from pathlib import Path
 import sqlite3
-import os
+
+import pandas as pd
 
 
-RATINGS_SAVE_TYPE_JSON = False #True => JSON, False => SQLITE
-USERS_SAVE_TYPE_JSON = True #True => JSON, False => SQLITE
+DEFAULT_DB_PATH = Path("data/parsed_data.db")
 
-USERS_LISTED_PATH = "filmatch/data/users_listed.txt"
-USERS_SCHEDULE_PATH = "filmatch/data/users_schedule.txt"
-USERS_PARSED_PATH = "filmatch/data/users_parsed.txt"
-RATINGS_JSON_PATH = "filmatch/data/data_ratings.json"
-USERS_JSON_PATH = "filmatch/data/data_users.json"
-DB_PATH = "filmatch/data/parsed_data.db"
 
-MAX_ITERS = 10_000
 
-def insert_ratings(
-    ratings: list[dict],
-    db_path: Path | str,
+def connect(
+    db_path = DEFAULT_DB_PATH,
+) -> sqlite3.Connection:
+    return sqlite3.connect(db_path)
+
+
+def initialize_db(
+    db_path = DEFAULT_DB_PATH,
 ) -> None:
-
-    if not ratings:
-        return
-
-    query = """
-        INSERT INTO Ratings (
-            user,
-            liked,
-            film,
-            reviewed,
-            rating
-        )
-        VALUES (?, ?, ?, ?, ?)
+    """
+    Create database and tables if they do not exist.
+    Existing tables and data are not modified.
     """
 
-    values = [
-        (
-            rating["user"],
-            rating["liked"],
-            rating["film"],
-            rating["reviewed"],
-            rating["rating"],
-        )
-        for rating in ratings
-    ]
+    db_path = Path(db_path)
 
-    with sqlite3.connect(db_path) as conn:
-        conn.executemany(query, values)
-
-def insert_user(
-    user: dict,
-    db_path: Path | str,
-) -> None:
+    db_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     query = """
-        INSERT INTO Users (
-            username,
-            status,
-            display_name,
-            geo,
-            films,
-            thisyear,
-            lists,
-            following,
-            followers,
-            favorities
+    CREATE TABLE IF NOT EXISTS Ratings (
+        user TEXT,
+        liked INTEGER,
+        film TEXT,
+        reviewed INTEGER,
+        rating INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS Users (
+        username TEXT,
+        status TEXT,
+        display_name TEXT,
+        geo TEXT,
+        films INTEGER,
+        thisyear INTEGER,
+        lists INTEGER,
+        following INTEGER,
+        followers INTEGER,
+        favorities TEXT
+    );
+    """
+
+    with connect(db_path) as conn:
+        conn.executescript(query)
+
+
+def load_ratings(
+    db_path = DEFAULT_DB_PATH,
+) -> pd.DataFrame:
+    """
+    load ratings table ()
+    """
+    with connect(db_path) as conn:
+        return pd.read_sql_query(
+            "SELECT * FROM Ratings",
+            conn,
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+
+def load_users(
+    db_path = DEFAULT_DB_PATH,
+) -> pd.DataFrame:
+    """
+    load users table ()
+    """
+    with connect(db_path) as conn:
+        return pd.read_sql_query(
+            "SELECT * FROM Users",
+            conn,
+        )
+
+
+def count_ratings(
+    db_path = DEFAULT_DB_PATH,
+) -> int:
+    """
+    Display count of ratings in db
+    """
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM Ratings"
+        )
+
+        return cursor.fetchone()[0]
+
+
+def count_users(
+    db_path = DEFAULT_DB_PATH,
+) -> int:
+    """
+    Display count of users in db
+    """
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM Users"
+        )
+
+        return cursor.fetchone()[0]
+
+
+def count_films(
+    db_path = DEFAULT_DB_PATH,
+) -> int:
+    """
+    Display count of unique films in database
+    """
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT COUNT(DISTINCT film)
+            FROM Ratings
+            """
+        )
+
+        return cursor.fetchone()[0]
+
+
+def insert_user(
+    conn,
+    user,
+) -> None:
+    """
+    Insert one user using an existing database connection.
+
+    Does NOT commit the transaction.
+    """
+
+    query = """
+    INSERT INTO Users (
+        username,
+        status,
+        display_name,
+        geo,
+        films,
+        thisyear,
+        lists,
+        following,
+        followers,
+        favorities
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     geo = user.get("geo")
+
     if isinstance(geo, list):
         geo = ", ".join(geo)
 
     favorites = user.get("favorities")
+
     if isinstance(favorites, list):
         favorites = ", ".join(favorites)
 
@@ -89,48 +176,67 @@ def insert_user(
         favorites,
     )
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(query, values)
+    conn.execute(
+        query,
+        values,
+    )
 
-db_exists = os.path.exists(DB_PATH)
 
-def initialize_db(db_path):
-    if not db_exists:
-        db = sqlite3.connect(db_path)
-        c = db.cursor()
-        create_tables_sql_query = """
-    CREATE TABLE Ratings(
-        user TEXT,
-        liked INTEGER,
-        film TEXT,
-        reviewed INTEGER,
-        rating INTEGER
-    );
-    CREATE TABLE Users(
-        username TEXT,
-        status TEXT,
-        display_name TEXT,
-        geo TEXT,
-        films INTEGER,
-        thisyear INTEGER,
-        lists INTEGER,
-        following INTEGER,
-        followers INTEGER,
-        favorities TEXT
-    );
+def insert_ratings(
+    conn,
+    ratings,
+) -> None:
+    """
+    Insert multiple ratings using an existing
+    database connection.
+
+    Does NOT commit the transaction.
     """
 
-        c.executescript(create_tables_sql_query)
-        db.commit()
-        db.close()
-        print("tables has created")
+    if not ratings:
+        return None
+
+    query = """
+    INSERT INTO Ratings (
+        user,
+        liked,
+        film,
+        reviewed,
+        rating
+    )
+    VALUES (?, ?, ?, ?, ?)
+    """
+
+    values = [
+        (
+            rating.get("user"),
+            rating.get("liked"),
+            rating.get("film"),
+            rating.get("reviewed"),
+            rating.get("rating"),
+        )
+        for rating in ratings
+    ]
+
+    conn.executemany(
+        query,
+        values,
+    )
+
 
 def save_user_data(
     user,
     ratings,
-    db_path,
-):
-    with sqlite3.connect(db_path) as conn:
+    db_path = DEFAULT_DB_PATH,
+) -> None:
+    """
+    Save user and all their ratings in one transaction.
+
+    If either operation fails, the transaction
+    is rolled back automatically.
+    """
+
+    with connect(db_path) as conn:
 
         insert_user(
             conn=conn,

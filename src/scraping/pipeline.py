@@ -21,10 +21,7 @@ def scrape_users(
 
         print(f"Parsing {username}...")
 
-        # -------------------------
-        # PARSING
-        # -------------------------
-
+        #parsing
         try:
             user = parse_user_main(
                 username,
@@ -44,10 +41,7 @@ def scrape_users(
             )
             continue
 
-        # -------------------------
-        # VALIDATION
-        # -------------------------
-
+        #validation
         if not user:
             print(
                 f"Empty user data: {username}"
@@ -65,10 +59,7 @@ def scrape_users(
                 f"No ratings found for {username}"
             )
 
-        # -------------------------
-        # DATABASE
-        # -------------------------
-
+        # database
         try:
             save_user_data(
                 user=user,
@@ -83,10 +74,7 @@ def scrape_users(
             )
             continue
 
-        # -------------------------
-        # SUCCESS
-        # -------------------------
-
+        # in case of success
         parsed_users.add(username)
 
         print(
