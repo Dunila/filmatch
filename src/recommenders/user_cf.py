@@ -193,6 +193,16 @@ def recommend(
         weighted_sum[valid] / similarity_sum[valid]
     )
 
+    #Bayes smoothing like in IMDB see wiki Bayes_estimator Practical exaple of Bayes extimators
+    target_values = target.data
+    user_mean = float(np.mean(target_values))
+
+    smoothing = 5.0
+
+    predicted = (
+        rating_counts * predicted + smoothing * user_mean
+    ) / (rating_counts + smoothing)
+
     predicted[target.indices] = -np.inf
 
     predicted[
