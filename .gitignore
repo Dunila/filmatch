@@ -1,4 +1,6 @@
-.db
-.pth
-.pt
-.pkl
+*.db
+*.pth
+*.pt
+*.pkl
+data/
+models/
