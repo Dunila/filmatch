@@ -54,7 +54,7 @@ def pearson_similarity(
 
     return float(
         np.dot(
-            target_ratings, candidate_centered
+            target_centered, candidate_centered
         ) / denominator
     )
 
@@ -113,6 +113,7 @@ def find_similar_user(
 
         similarities.append(
             {
+                "user_idx": candidate_idx,
                 "user": data.users[candidate_idx],
                 "similarity": similarity,
                 "common_films": len(common_films)
@@ -126,3 +127,103 @@ def find_similar_user(
 
     return similarities[:n_neighbors]
 
+def recommend(
+        data: RecommenderData,
+        username: str,
+        n_recommendations: int = 10,
+        n_neighbors: int = 50,
+        min_common_films: int = 20,
+        min_neighbor_ratings: int = 3
+) -> list[dict]:
+    
+    similar_users = find_similar_user(
+        data=data,
+        username=username,
+        n_neighbors=n_neighbors,
+        min_common_films=min_common_films
+    )
+
+    if not similar_users:
+        return []
+
+    target_idx = data.user_to_idx[username]
+    target = data.ratings[target_idx]
+
+    neighbor_indices = np.array(
+        [user["user_idx"] for user in similar_users],
+        dtype=np.int32
+    )
+
+    similarities = np.array(
+        [user["similarity"] for user in similar_users],
+        dtype=np.float32
+    )
+
+    neighbor_ratings = data.ratings[neighbor_indices]
+
+    weighted_sum = (
+        neighbor_ratings.T @ similarities
+    )
+
+    weighted_sum = np.asarray(weighted_sum).ravel()
+
+    rated_mask = neighbor_ratings.copy()
+    rated_mask.data[:] = 1
+
+    similarity_sum = (
+        rated_mask.T @ np.abs(similarities)
+    )
+
+    similarity_sum = np.asarray(
+        similarity_sum
+    ).ravel()
+
+    rating_counts = np.asarray(
+        rated_mask.sum(axis=0)
+    ).ravel()
+
+    predicted = np.zeros_like(
+        weighted_sum,
+        dtype=np.float32
+    )
+
+    valid = similarity_sum > 0
+
+    predicted[valid] = (
+        weighted_sum[valid] / similarity_sum[valid]
+    )
+
+    predicted[target.indices] = -np.inf
+
+    predicted[
+        rating_counts < min_neighbor_ratings
+    ] = -np.inf
+
+    valid_indices = np.flatnonzero(
+        np.isfinite(predicted)
+    )
+
+    if valid_indices.size == 0:
+        return []
+
+    order = np.argsort(
+        predicted[valid_indices]
+    )[::-1]
+
+    top_indices = valid_indices[
+        order[:n_recommendations]
+    ]
+
+    return [
+        {
+            "film": data.films[film_idx],
+            "predicted_rating": float(predicted[film_idx]),
+            "neighbor_ratings": int(rating_counts[film_idx])
+        }
+        for film_idx in top_indices
+    ]
+
+
+
+
+    
