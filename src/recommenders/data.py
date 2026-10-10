@@ -168,7 +168,7 @@ def save_recommender_data(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     save_npz(
-        cache_dir / "rating.npz",
+        cache_dir / "ratings.npz",
         data.ratings,
         compressed=False
     )
@@ -178,7 +178,7 @@ def save_recommender_data(
 
     print(f"Recommender data saved to {cache_dir}")
 
-def load_cached_recomender_data(
+def load_cached_recommender_data(
         cache_dir: Path,
 ) -> RecommenderData:
 
