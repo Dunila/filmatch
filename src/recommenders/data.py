@@ -3,7 +3,7 @@ from pathlib import Path
 import sqlite3
 
 import numpy as np
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, save_npz, load_npz
 
 
 @dataclass
@@ -160,3 +160,56 @@ def load_recommender_data(
         film_to_idx=film_to_idx
     )
 
+def save_recommender_data(
+    data: RecommenderData,
+    cache_dir: Path
+) -> None:
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    save_npz(
+        cache_dir / "rating.npz",
+        data.ratings,
+        compressed=False
+    )
+
+    np.save(cache_dir / "users.npy", data.users)
+    np.save(cache_dir / "films.npy", data.films)
+
+    print(f"Recommender data saved to {cache_dir}")
+
+def load_cached_recomender_data(
+        cache_dir: Path,
+) -> RecommenderData:
+
+    print("Loading cached recommender data")
+
+    ratings = load_npz(
+        cache_dir / "ratings.npz"
+    ).tocsr()
+
+    users = np.load(
+        cache_dir / "users.npy",
+        allow_pickle=False
+    )
+
+    films = np.load(
+        cache_dir / "films.npy",
+        allow_pickle=False
+    )
+
+    user_to_idx = {
+        username: idx for idx, username in enumerate(users)
+    }
+
+    film_to_idx = {
+        film: idx for idx, film in enumerate(films)
+    }
+
+    return RecommenderData(
+        ratings=ratings,
+        users=users,
+        films=films,
+        user_to_idx=user_to_idx,
+        film_to_idx=film_to_idx
+    )
