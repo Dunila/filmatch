@@ -9,6 +9,7 @@ def fetch_one(
         conn: sqlite3.Connection,
         query: str
 ):
+    #function to return one exact result
     result = conn.execute(query).fetchone()
 
     if result is None:
@@ -19,6 +20,7 @@ def fetch_one(
 def get_basic_stats(
         conn: sqlite3.Connection
 ) -> dict:
+    #craete dict with basic stats - count of ratings, users, films in different tables
     return {
         "ratings_cnt": fetch_one(
             conn,
@@ -41,6 +43,7 @@ def get_basic_stats(
 def get_duplicate_stats(
         conn: sqlite3.Connection
 ) -> dict:
+    #print duplicate statistics
     duplicate_user_film_pairs = fetch_one(
         conn,
         """
@@ -52,7 +55,7 @@ def get_duplicate_stats(
             HAVING COUNT(*) > 1
         )
         """
-    )
+    ) #Choose user-film pair that appears more than one time in rating and print count of such pairs
 
     duplicate_rating_rows = fetch_one(
         conn,
@@ -65,7 +68,7 @@ def get_duplicate_stats(
             HAVING COUNT(*) > 1
         )
         """
-    )
+    ) #Choose user-film pair that appears more than one time in rating and print SUM of count of such pairs
 
     duplicate_users = fetch_one(
         conn,
@@ -78,7 +81,7 @@ def get_duplicate_stats(
             HAVING COUNT(*) > 1
         )
         """
-    )
+    ) # print count of duplicates usernames in users
 
     duplicate_user_rows = fetch_one(
         conn,
@@ -91,7 +94,7 @@ def get_duplicate_stats(
             HAVING COUNT(*) > 1
         )
         """
-    )
+    ) 
 
     return {
         "duplicate_user_film_pairs": duplicate_user_film_pairs,

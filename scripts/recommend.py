@@ -11,6 +11,7 @@ CACHE_DIR = Path("artifacts/recommender")
 def main() -> None:
     start = perf_counter()
 
+    #parsing arguments from CLI
     parser = argparse.ArgumentParser(
         description="Filmatch movie recommender"
     )
@@ -31,6 +32,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    #loading cached database TODO What if there is no cached database?
     data = load_cached_recommender_data(CACHE_DIR)
 
     username = args.user.lower()
@@ -44,8 +46,9 @@ def main() -> None:
 
     print()
     print(f"User {username}")
-    print(f"Rated films: {data.ratings[user_idx].nnz:,}")
+    print(f"Rated films: {data.ratings[user_idx].nnz:,}") #data ratings[user*film] matrix uid row .nnz - count non zero
 
+    #generate recs
     recommendations = recommend(
         data=data,
         username=username,
@@ -63,11 +66,13 @@ def main() -> None:
         print("No recommendations found")
         return None
 
+    #print recs
     for rank, rec in enumerate(recommendations, start=1):
         print(f"{rank:>2}. {rec['film']:<45} score={rec['predicted_rating']:.2f}")
         print(f"neighbors: {rec['neighbor_ratings']}")
         print()
 
+    #checking performance time
     print("*************")
     print(f"Total time: {perf_counter() - start:.2f} sec")
 
