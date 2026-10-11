@@ -3,6 +3,7 @@ import numpy as np
 import sqlite3
 import json
 from tqdm import tqdm 
+from scipy.sparse import csr_matrix
 
 from src.recommenders.data import RecommenderData
 
@@ -121,11 +122,68 @@ def find_similar_user(
         )
 
     similarities.sort(
-        key = lambda row: row["similarity"],
+        key = lambda user: user["similarity"],
         reverse=True
     )
 
     return similarities[:n_neighbors]
+
+def find_similar_users_for_vector(
+        data: RecommenderData,
+        target: csr_matrix,
+        n_neighbors: int = 50,
+        min_common_films: int = 20
+) -> list[dict]:
+    target_films = target.indices
+    common_counts = (
+        data.ratings[:, target_films] != 0
+    ).sum(axis=1)
+
+    common_counts = np.asarray(common_counts).ravel()
+
+    candidate_indices = np.flatnonzero(
+        common_counts >= min_common_films
+    )
+
+    similar_users = []
+
+    for user_idx in candidate_indices:
+        candidate = data.ratings[user_idx]
+
+        common_films = np.intersect1d(
+            target.indices,
+            candidate.indices
+        )
+
+        target_values = target[
+            0, common_films
+        ].toarray().ravel()
+
+        candidate_values = candidate[
+            0, common_films
+        ].toarray().ravel()
+
+        similarity = pearson_similarity(
+            target_values,
+            candidate_values
+        )
+
+        if similarity <= 0:
+            continue
+
+        similar_users.append({
+            "user_idx": int(user_idx),
+            "user": str(data.users[user_idx]),
+            "similarity": float(similarity),
+            "common_films": len(common_films)
+        })
+
+        similar_users.sort(
+            key=lambda user: user["similarity"],
+            revers=True
+        )
+
+        return similar_users[:n_neighbors]
 
 def recommend(
         data: RecommenderData,

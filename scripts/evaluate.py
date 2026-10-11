@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from tqdm import tqdm
 import numpy as np
 
 from src.recommenders.data import (
@@ -11,7 +11,7 @@ from src.recommenders.user_cf import recommend
 
 CACHE_DIR = Path("artifacts/recommender")
 
-N_USERS = 5
+N_USERS = 50
 MIN_USER_RATINGS = 100
 
 TEST_SIZE = 0.2
@@ -73,7 +73,7 @@ def recommend_popular(
     data:RecommenderData,
     username: str,
     top_k: int = 20
-) -> set[int]:
+) -> set[int]: # TODO refacture could be problematic 
     user_idx = data.user_to_idx[username]
 
     popularity = np.diff(
@@ -93,20 +93,13 @@ def recommend_popular(
     )
 
 def evaluate_user(
-    data: RecommenderData,
+    train_data: RecommenderData,
     user_idx: int,
-    rng: np.random.Generator,
-    recommender: str = "cf" #or popullar
+    hidden_ratings: dict[int, float],
+    recommender: str = "cf",
 ) -> dict:
-    """Evaluate recommendations for one user."""
 
-    username = str(data.users[user_idx])
-
-    train_data, hidden_ratings = split_user_ratings(
-        data=data,
-        user_idx=user_idx,
-        rng=rng,
-    )
+    username = str(train_data.users[user_idx])
 
     if recommender == "cf":
         recommendations = recommend(
@@ -119,7 +112,7 @@ def evaluate_user(
         )
 
         recommended_films = {
-            data.film_to_idx[rec["film"]]
+            train_data.film_to_idx[rec["film"]]
             for rec in recommendations
         }
 
@@ -128,6 +121,11 @@ def evaluate_user(
             data=train_data,
             username=username,
             top_k=TOP_K,
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown recommender: {recommender}"
         )
 
     relevant_films = {
@@ -143,7 +141,7 @@ def evaluate_user(
     recall = (
         hits / len(relevant_films)
         if relevant_films
-        else 0.0
+        else np.nan
     )
 
     return {
@@ -175,46 +173,65 @@ def main() -> None:
         replace=False,
     )
 
-    results = []
+    results = {
+        "cf": [],
+        "popular": [],
+    }
 
-    print()
-    print("FILMATCH EVALUATION")
-    print("=" * 75)
+    for user_idx in tqdm(selected_users):
+        user_idx = int(user_idx)
 
-    for user_idx in selected_users:
-        result = evaluate_user(
+        train_data, hidden_ratings = split_user_ratings(
             data=data,
-            user_idx=int(user_idx),
+            user_idx=user_idx,
             rng=rng,
         )
 
-        results.append(result)
+        for recommender in results:
+            result = evaluate_user(
+                train_data=train_data,
+                user_idx=user_idx,
+                hidden_ratings=hidden_ratings,
+                recommender=recommender,
+            )
 
-        print(
-            f"{result['username']:<25} "
-            f"hidden={result['hidden']:<5} "
-            f"relevant={result['relevant']:<5} "
-            f"hits={result['hits']:<3} "
-            f"P@20={result['precision']:.3f} "
-            f"R@20={result['recall']:.3f}"
-        )
+            results[recommender].append(result)
+
+            print()
+            print(
+                f"{result['username']:<25} "
+                f"{recommender:<8} "
+                f"hits={result['hits']:<3} "
+                f"P@20={result['precision']:.3f} "
+                f"R@20={result['recall']:.3f}"
+            )
 
     print()
     print("AVERAGE RESULTS")
     print("=" * 75)
 
-    avg_precision = np.mean([
-        result["precision"]
-        for result in results
-    ])
+    for recommender, model_results in results.items():
+        avg_precision = np.mean([
+            result["precision"]
+            for result in model_results
+        ])
 
-    avg_recall = np.mean([
-        result["recall"]
-        for result in results
-    ])
+        recalls = np.array([
+            result["recall"]
+            for result in model_results
+        ])
 
-    print(f"Precision@{TOP_K}: {avg_precision:.4f}")
-    print(f"Recall@{TOP_K}:    {avg_recall:.4f}")
+        avg_recall = (
+            np.nanmean(recalls)
+            if np.any(~np.isnan(recalls))
+            else np.nan
+        )
+
+        print(
+            f"{recommender:<10} "
+            f"Precision@{TOP_K}={avg_precision:.4f} "
+            f"Recall@{TOP_K}={avg_recall:.4f}"
+        )
 
 
 if __name__ == "__main__":
