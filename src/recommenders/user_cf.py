@@ -73,60 +73,16 @@ def find_similar_user(
     target_idx = data.user_to_idx[username]
     target = data.ratings[target_idx]
 
-    common_counts = get_common_counts(
+    similar_users = find_similar_user(
         data=data,
-        user_idx=target_idx
+        target=target,
+        n_neighbors=n_neighbors,
+        min_common_films=min_common_films
     )
 
-    candidate_indices = np.flatnonzero(
-        common_counts >= min_common_films
-    )
-
-    candidate_indices = candidate_indices[
-        candidate_indices != target_idx
+    return [
+        user for user in similar_users if user["user_idx"] != target_idx
     ]
-
-    similarities = []
-
-    for candidate_idx in candidate_indices:
-        candidate = data.ratings[candidate_idx]
-
-        common_films = np.intersect1d(
-            target.indices,
-            candidate.indices,
-            assume_unique=True
-        )
-
-        target_values = target[
-            0,
-            common_films
-        ].toarray().ravel()
-
-        candidate_values = candidate[
-            0,
-            common_films
-        ].toarray().ravel()
-
-        similarity = pearson_similarity(
-            target_values,
-            candidate_values
-        )
-
-        similarities.append(
-            {
-                "user_idx": candidate_idx,
-                "user": data.users[candidate_idx],
-                "similarity": similarity,
-                "common_films": len(common_films)
-            }
-        )
-
-    similarities.sort(
-        key = lambda user: user["similarity"],
-        reverse=True
-    )
-
-    return similarities[:n_neighbors]
 
 def find_similar_users_for_vector(
         data: RecommenderData,
@@ -180,7 +136,7 @@ def find_similar_users_for_vector(
 
         similar_users.sort(
             key=lambda user: user["similarity"],
-            revers=True
+            reverse=True
         )
 
         return similar_users[:n_neighbors]

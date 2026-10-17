@@ -53,7 +53,7 @@ def handle_poster(poster, user):
         "rating": rating
     }
 
-def parse_ratings_page(soup, user):
+def parse_ratings_page_old(soup, user):
     '''Берёт суп с одной страницей пользователь-фильмы и собирает инфу о взаимодействии юзера и фильма в список словарей'''
     try:
         films = soup.find("body").find("ul", "grid -p70").find_all("li") #poster-list -p70 -grid film-list clear
@@ -71,6 +71,28 @@ def parse_ratings_page(soup, user):
         print(f"Failed parge rating page. Error: {e}")
         time.sleep(5)
         return []
+
+def parse_ratings_page(soup, user):
+    body = soup.find("body")
+
+    if body is None:
+        print("Body not found")
+        return []
+
+    films_list = body.find("ul", class_="grid -p70")
+
+    if films_list is None:
+        print("Films list not found")
+        print("Page title:", soup.title)
+        print("HTML preview:", body.prettify()[:1500])
+        return []
+
+    films = films_list.find_all("li")
+
+    return [
+        handle_poster(poster, user)
+        for poster in films
+    ]
 
 def parse_user_ratings(username, driver, sleep=None):
     '''По юзернейму парсит все его оценки со страниц пользователь-фильм'''

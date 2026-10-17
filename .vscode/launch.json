@@ -1,0 +1,11 @@
+{
+    "name": "${workspaceFolderBasename}: Current File",
+    "type": "debugpy",
+    "request": "launch",
+    "program": "${file}",
+    "console": "integratedTerminal",
+    "cwd": "${workspaceFolder}",
+    "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+    }
+}
