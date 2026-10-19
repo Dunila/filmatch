@@ -73,10 +73,10 @@ def find_similar_user(
     target_idx = data.user_to_idx[username]
     target = data.ratings[target_idx]
 
-    similar_users = find_similar_user(
+    similar_users = find_similar_users_for_vector(
         data=data,
         target=target,
-        n_neighbors=n_neighbors,
+        n_neighbors=n_neighbors+1,
         min_common_films=min_common_films
     )
 
@@ -134,12 +134,12 @@ def find_similar_users_for_vector(
             "common_films": len(common_films)
         })
 
-        similar_users.sort(
-            key=lambda user: user["similarity"],
-            reverse=True
-        )
+    similar_users.sort(
+        key=lambda user: user["similarity"],
+        reverse=True
+    )
 
-        return similar_users[:n_neighbors]
+    return similar_users[:n_neighbors]
 
 def recommend(
         data: RecommenderData,
@@ -246,8 +246,4 @@ def recommend(
         }
         for film_idx in top_indices
     ]
-
-
-
-
     

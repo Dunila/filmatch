@@ -1,12 +1,16 @@
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
+import argparse
 
 from src.recommenders.data import (
     RecommenderData,
     load_cached_recommender_data,
 )
 from src.recommenders.user_cf import recommend
+from src.recommenders.als import ExplicitALS
+from src.evaluation.metrics import precision_at_k, recall_at_k, ndcg_at_k
+from src.evaluation.split import split_users_ratings
 
 
 CACHE_DIR = Path("artifacts/recommender")
@@ -20,54 +24,6 @@ RANDOM_SEED = 42
 TOP_K = 20
 LIKE_THRESHOLD = 8.0
 
-
-def split_user_ratings(
-    data: RecommenderData,
-    user_idx: int,
-    rng: np.random.Generator,
-):
-    """Hide 20% of the user's ratings."""
-
-    user_ratings = data.ratings[user_idx]
-
-    film_indices = user_ratings.indices
-    ratings = user_ratings.data
-
-    n_test = max(
-        1,
-        int(len(film_indices) * TEST_SIZE),
-    )
-
-    test_positions = rng.choice(
-        len(film_indices),
-        size=n_test,
-        replace=False,
-    )
-
-    # Remember hidden films and their ratings.
-    hidden_ratings = {
-        int(film_indices[pos]): float(ratings[pos])
-        for pos in test_positions
-    }
-
-    # Make an independent copy of the matrix.
-    train_matrix = data.ratings.copy().tolil()
-
-    # Remove hidden ratings from the target user's row.
-    train_matrix[user_idx, list(hidden_ratings)] = 0
-
-    train_matrix = train_matrix.tocsr()
-    train_matrix.eliminate_zeros()
-
-    train_data = RecommenderData(
-        ratings=train_matrix,
-        users=data.users,
-        films=data.films,
-        user_to_idx=data.user_to_idx,
-        film_to_idx=data.film_to_idx,
-    )
-
-    return train_data, hidden_ratings
 
 def recommend_popular(
     data:RecommenderData,
@@ -88,15 +44,18 @@ def recommend_popular(
         popularity 
     )[::-1][:top_k]
 
-    return set(
-        int(idx) for idx in top_indices if popularity[idx] > 0
-    )
+    return [
+        int(idx)
+        for idx in top_indices
+        if popularity[idx] > 0
+    ]
 
 def evaluate_user(
     train_data: RecommenderData,
     user_idx: int,
     hidden_ratings: dict[int, float],
     recommender: str = "cf",
+    als_model: ExplicitALS | None = None
 ) -> dict:
 
     username = str(train_data.users[user_idx])
@@ -111,16 +70,26 @@ def evaluate_user(
             min_neighbor_ratings=3,
         )
 
-        recommended_films = {
+        recommended_films = [
             train_data.film_to_idx[rec["film"]]
             for rec in recommendations
-        }
+        ]
 
     elif recommender == "popular":
         recommended_films = recommend_popular(
             data=train_data,
             username=username,
             top_k=TOP_K,
+        )
+
+    elif recommender == "als":
+        if als_model is None:
+            raise ValueError("ALS model is not provided")
+
+        recommended_films = als_model.recommend(
+            user_idx=user_idx,
+            ratings=train_data.ratings,
+            n_recommendations=TOP_K
         )
 
     else:
@@ -134,14 +103,26 @@ def evaluate_user(
         if rating >= LIKE_THRESHOLD
     }
 
-    hits = len(recommended_films & relevant_films)
+    hits = len(
+        set(recommended_films[:TOP_K]) & relevant_films
+    )
 
-    precision = hits / TOP_K
+    precision = precision_at_k(
+        recommended_films,
+        relevant_films,
+        TOP_K,
+    )
 
-    recall = (
-        hits / len(relevant_films)
-        if relevant_films
-        else np.nan
+    recall = recall_at_k(
+        recommended_films,
+        relevant_films,
+        TOP_K,
+    )
+
+    ndcg = ndcg_at_k(
+        recommended_films,
+        relevant_films,
+        TOP_K,
     )
 
     return {
@@ -151,41 +132,140 @@ def evaluate_user(
         "hits": hits,
         "precision": precision,
         "recall": recall,
+        "ndcg": ndcg,
     }
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate Filmatch recommenders"
+    )
+
+    parser.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="Evaluate a specific user",
+    )
+
+    parser.add_argument(
+        "--n-users",
+        type=int,
+        default=N_USERS,
+        help="Number of users to evaluate",
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=RANDOM_SEED,
+        help="Random seed",
+    )
+
+    parser.add_argument(
+        "--test-size",
+        type=float,
+        default=TEST_SIZE,
+        help="Fraction of ratings to hide",
+    )
+
+    parser.add_argument(
+        "--model",
+        choices=["cf", "popular", "als", "all"],
+        default="all"
+    )
+
+    return parser.parse_args()
 
 def main() -> None:
-    rng = np.random.default_rng(RANDOM_SEED)
+    args = parse_args()
+
+    if args.n_users < 1:
+        raise ValueError("--n-users must be positive")
+
+    rng = np.random.default_rng(args.seed)
 
     data = load_cached_recommender_data(CACHE_DIR)
 
-    user_rating_counts = np.diff(
-        data.ratings.indptr
+    models = (
+        ["cf", "popular", "als"] if args.model == "all" else [args.model]
     )
 
-    eligible_users = np.flatnonzero(
-        user_rating_counts >= MIN_USER_RATINGS
+    if args.user is not None:
+        username = args.user.lower()
+
+        if username not in data.user_to_idx:
+            raise ValueError(
+                f"Unknown user: {username}"
+            )
+
+        selected_users = np.array([
+            data.user_to_idx[username]
+        ])
+
+    else:
+        user_rating_counts = np.diff(
+            data.ratings.indptr
+        )
+
+        eligible_users = np.flatnonzero(
+            user_rating_counts >= MIN_USER_RATINGS
+        )
+
+        selected_users = rng.choice(
+            eligible_users,
+            size=min(args.n_users, len(eligible_users)),
+            replace=False,
+        )
+
+    train_data, hidden_by_user = split_users_ratings(
+        data=data,
+        user_indices=selected_users,
+        rng=rng,
+        test_size=args.test_size,
     )
 
-    selected_users = rng.choice(
-        eligible_users,
-        size=min(N_USERS, len(eligible_users)),
-        replace=False,
-    )
+    assert train_data.ratings.shape == data.ratings.shape
+
+    for user_idx, hidden_ratings in hidden_by_user.items():
+        hidden_films = np.array(
+            list(hidden_ratings),
+            dtype=np.int64,
+        )
+
+        assert train_data.ratings[
+            user_idx, hidden_films
+        ].nnz == 0
+
+        assert (
+            train_data.ratings[user_idx].nnz
+            + len(hidden_ratings)
+            == data.ratings[user_idx].nnz
+        )
+
+    print("Train/test split verified")
+
+    als_model = None
+
+    if "als" in models:
+        print("Training ALS...")
+
+        als_model = ExplicitALS(
+            n_factors=32,
+            regularization=10.0,
+            n_iterations=20,
+            random_seed=RANDOM_SEED
+        )
+
+        als_model.fit(train_data.ratings)
 
     results = {
-        "cf": [],
-        "popular": [],
+        model: [] for model in models
     }
 
     for user_idx in tqdm(selected_users):
         user_idx = int(user_idx)
 
-        train_data, hidden_ratings = split_user_ratings(
-            data=data,
-            user_idx=user_idx,
-            rng=rng,
-        )
+        hidden_ratings = hidden_by_user[user_idx]
 
         for recommender in results:
             result = evaluate_user(
@@ -193,6 +273,7 @@ def main() -> None:
                 user_idx=user_idx,
                 hidden_ratings=hidden_ratings,
                 recommender=recommender,
+                als_model=als_model
             )
 
             results[recommender].append(result)
@@ -202,8 +283,9 @@ def main() -> None:
                 f"{result['username']:<25} "
                 f"{recommender:<8} "
                 f"hits={result['hits']:<3} "
-                f"P@20={result['precision']:.3f} "
-                f"R@20={result['recall']:.3f}"
+                f"P@{TOP_K}={result['precision']:.3f} "
+                f"R@{TOP_K}={result['recall']:.3f} "
+                f"NDCG@{TOP_K}={result['ndcg']:.3f}"
             )
 
     print()
@@ -227,10 +309,22 @@ def main() -> None:
             else np.nan
         )
 
+        ndcgs = np.array([
+            result["ndcg"]
+            for result in model_results
+        ])
+
+        avg_ndcg = (
+            np.nanmean(ndcgs)
+            if np.any(~np.isnan(ndcgs))
+            else np.nan
+        )
+
         print(
             f"{recommender:<10} "
             f"Precision@{TOP_K}={avg_precision:.4f} "
-            f"Recall@{TOP_K}={avg_recall:.4f}"
+            f"Recall@{TOP_K}={avg_recall:.4f} "
+            f"NDCG@{TOP_K}={avg_ndcg:.4f}"
         )
 
 
