@@ -2,12 +2,13 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 import argparse
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 
 from src.recommenders.data import (
     RecommenderData,
     load_cached_recommender_data,
 )
-from src.recommenders.user_cf import recommend
+from src.recommenders.user_cf import recommend, predict_ratings
 from src.recommenders.als import ExplicitALS
 from src.evaluation.metrics import precision_at_k, recall_at_k, ndcg_at_k
 from src.evaluation.split import split_users_ratings
@@ -54,86 +55,181 @@ def evaluate_user(
     train_data: RecommenderData,
     user_idx: int,
     hidden_ratings: dict[int, float],
+    evaluate_problem: str = "ranking", #or "reg"
     recommender: str = "cf",
     als_model: ExplicitALS | None = None
 ) -> dict:
 
     username = str(train_data.users[user_idx])
 
-    if recommender == "cf":
-        recommendations = recommend(
-            data=train_data,
-            username=username,
-            n_recommendations=TOP_K,
-            n_neighbors=50,
-            min_common_films=20,
-            min_neighbor_ratings=3,
+    if not evaluate_problem in ["ranking", "reg"]:
+        raise ValueError("evaluate_problem must be ranking or reg")
+
+    if evaluate_problem == "ranking":
+        if recommender == "cf":
+            recommendations = recommend(
+                data=train_data,
+                username=username,
+                n_recommendations=TOP_K,
+                n_neighbors=50,
+                min_common_films=20,
+                min_neighbor_ratings=3,
+            )
+    
+            recommended_films = [
+                train_data.film_to_idx[rec["film"]]
+                for rec in recommendations
+            ]
+    
+        elif recommender == "popular":
+            recommended_films = recommend_popular(
+                data=train_data,
+                username=username,
+                top_k=TOP_K,
+            )
+    
+        elif recommender == "als":
+            if als_model is None:
+                raise ValueError("ALS model is not provided")
+    
+            recommended_films = als_model.recommend(
+                user_idx=user_idx,
+                ratings=train_data.ratings,
+                n_recommendations=TOP_K
+            )
+    
+        else:
+            raise ValueError(
+                f"Unknown recommender: {recommender}"
+            )
+
+        relevant_films = {
+            film_idx
+            for film_idx, rating in hidden_ratings.items()
+            if rating >= LIKE_THRESHOLD
+        }
+
+        hits = len(
+            set(recommended_films[:TOP_K]) & relevant_films
         )
 
-        recommended_films = [
-            train_data.film_to_idx[rec["film"]]
-            for rec in recommendations
-        ]
-
-    elif recommender == "popular":
-        recommended_films = recommend_popular(
-            data=train_data,
-            username=username,
-            top_k=TOP_K,
+        precision = precision_at_k(
+            recommended_films,
+            relevant_films,
+            TOP_K,
         )
 
-    elif recommender == "als":
-        if als_model is None:
-            raise ValueError("ALS model is not provided")
-
-        recommended_films = als_model.recommend(
-            user_idx=user_idx,
-            ratings=train_data.ratings,
-            n_recommendations=TOP_K
+        recall = recall_at_k(
+            recommended_films,
+            relevant_films,
+            TOP_K,
         )
 
-    else:
-        raise ValueError(
-            f"Unknown recommender: {recommender}"
+        ndcg = ndcg_at_k(
+            recommended_films,
+            relevant_films,
+            TOP_K,
         )
 
-    relevant_films = {
-        film_idx
-        for film_idx, rating in hidden_ratings.items()
-        if rating >= LIKE_THRESHOLD
-    }
+        return {
+            "username": username,
+            "hidden": len(hidden_ratings),
+            "relevant": len(relevant_films),
+            "hits": hits,
+            "precision": precision,
+            "recall": recall,
+            "ndcg": ndcg,
+        }
+    
+    elif evaluate_problem == "reg":
 
-    hits = len(
-        set(recommended_films[:TOP_K]) & relevant_films
-    )
+        actual = []
+        pred = []
 
-    precision = precision_at_k(
-        recommended_films,
-        relevant_films,
-        TOP_K,
-    )
+        if recommender == "als":
+            if als_model is None:
+                raise ValueError("ALS model is not provided")
 
-    recall = recall_at_k(
-        recommended_films,
-        relevant_films,
-        TOP_K,
-    )
+            for item_idx, rating in hidden_ratings.items():
+                actual.append(rating)
+                pred.append(als_model.predict(user_idx, item_idx))
 
-    ndcg = ndcg_at_k(
-        recommended_films,
-        relevant_films,
-        TOP_K,
-    )
+        elif recommender == "popular":
+            rating_sums = np.asarray(
+                train_data.ratings.sum(axis=0)
+            ).ravel()
 
-    return {
-        "username": username,
-        "hidden": len(hidden_ratings),
-        "relevant": len(relevant_films),
-        "hits": hits,
-        "precision": precision,
-        "recall": recall,
-        "ndcg": ndcg,
-    }
+            rating_counts = np.diff(
+                train_data.ratings.tocsc().indptr
+            )
+
+            film_means = np.divide(
+                rating_sums,
+                rating_counts,
+                out=np.full(
+                    len(rating_sums),
+                    np.nan,
+                    dtype=np.float64,
+                ),
+                where=rating_counts > 0,
+            )
+
+            for item_idx, rating in hidden_ratings.items():
+                prediction = film_means[item_idx]
+
+                if not np.isfinite(prediction):
+                    continue
+
+                actual.append(rating)
+                pred.append(float(prediction))
+
+        elif recommender == "cf":
+            predictions = predict_ratings(
+                data=train_data,
+                username=username,
+                film_indices=list(hidden_ratings.keys()),
+            )
+
+            for item_idx, rating in hidden_ratings.items():
+                if item_idx not in predictions:
+                    continue
+
+                actual.append(rating)
+                pred.append(predictions[item_idx])
+
+        else:
+            raise ValueError(f"Unknown recommender: {recommender}")
+
+        coverage = (
+            len(actual) / len(hidden_ratings)
+            if hidden_ratings else 0.0
+        )
+
+        if not actual:
+            return {
+                "username": username,
+                "hidden": len(hidden_ratings),
+                "predicted": 0,
+                "coverage": coverage,
+                "mae": np.nan,
+                "rmse": np.nan,
+            }
+
+        actual = np.asarray(actual, dtype=np.float64)
+        pred = np.asarray(pred, dtype=np.float64)
+
+        mae = mean_absolute_error(actual, pred)
+        rmse = root_mean_squared_error(actual, pred)
+
+        return {
+            "username": username,
+            "hidden": len(hidden_ratings),
+            "predicted": len(actual),
+            "coverage": coverage,
+            "mae": mae,
+            "rmse": rmse,
+        }
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -178,6 +274,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    evaluation_problem = "reg"
 
     if args.n_users < 1:
         raise ValueError("--n-users must be positive")
@@ -252,7 +350,7 @@ def main() -> None:
         als_model = ExplicitALS(
             n_factors=32,
             regularization=10.0,
-            n_iterations=20,
+            n_iterations=5,
             random_seed=RANDOM_SEED
         )
 
@@ -273,59 +371,85 @@ def main() -> None:
                 user_idx=user_idx,
                 hidden_ratings=hidden_ratings,
                 recommender=recommender,
-                als_model=als_model
+                als_model=als_model,
+                evaluate_problem=evaluation_problem
             )
 
             results[recommender].append(result)
 
             print()
-            print(
-                f"{result['username']:<25} "
-                f"{recommender:<8} "
-                f"hits={result['hits']:<3} "
-                f"P@{TOP_K}={result['precision']:.3f} "
-                f"R@{TOP_K}={result['recall']:.3f} "
-                f"NDCG@{TOP_K}={result['ndcg']:.3f}"
-            )
+            if evaluation_problem == "ranking":
+                print(
+                    f"{result['username']:<25} "
+                    f"{recommender:<8} "
+                    f"hits={result['hits']:<3} "
+                    f"P@{TOP_K}={result['precision']:.3f} "
+                    f"R@{TOP_K}={result['recall']:.3f} "
+                    f"NDCG@{TOP_K}={result['ndcg']:.3f}"
+                )
+            elif evaluation_problem == "reg":
+                print(
+                    f"{result['username']:<25} "
+                    f"{recommender:<8} "
+                    f"MAE={result['mae']:.3f} "
+                    f"RMSE={result['rmse']:.3f} "
+                    f"LEN={result['predicted']}"
+                )
 
     print()
     print("AVERAGE RESULTS")
     print("=" * 75)
 
-    for recommender, model_results in results.items():
-        avg_precision = np.mean([
-            result["precision"]
-            for result in model_results
-        ])
+    if evaluation_problem == "ranking":
+        for recommender, model_results in results.items():
+            avg_precision = np.mean([
+                result["precision"]
+                for result in model_results
+            ])
 
-        recalls = np.array([
-            result["recall"]
-            for result in model_results
-        ])
+            recalls = np.array([
+                result["recall"]
+                for result in model_results
+            ])
 
-        avg_recall = (
-            np.nanmean(recalls)
-            if np.any(~np.isnan(recalls))
-            else np.nan
-        )
+            avg_recall = (
+                np.nanmean(recalls)
+                if np.any(~np.isnan(recalls))
+                else np.nan
+            )
 
-        ndcgs = np.array([
-            result["ndcg"]
-            for result in model_results
-        ])
+            ndcgs = np.array([
+                result["ndcg"]
+                for result in model_results
+            ])
 
-        avg_ndcg = (
-            np.nanmean(ndcgs)
-            if np.any(~np.isnan(ndcgs))
-            else np.nan
-        )
+            avg_ndcg = (
+                np.nanmean(ndcgs)
+                if np.any(~np.isnan(ndcgs))
+                else np.nan
+            )
 
-        print(
-            f"{recommender:<10} "
-            f"Precision@{TOP_K}={avg_precision:.4f} "
-            f"Recall@{TOP_K}={avg_recall:.4f} "
-            f"NDCG@{TOP_K}={avg_ndcg:.4f}"
-        )
+            print(
+                f"{recommender:<10} "
+                f"Precision@{TOP_K}={avg_precision:.4f} "
+                f"Recall@{TOP_K}={avg_recall:.4f} "
+                f"NDCG@{TOP_K}={avg_ndcg:.4f}"
+            )
+    elif evaluation_problem == "reg":
+        for recommender, model_results in results.items():
+            avg_mae = np.mean(
+                [result["mae"] for result in model_results]
+            )
+
+            avg_rmse = np.mean(
+                [result["rmse"] for result in model_results]
+            )
+
+            print(
+                f"{recommender:<10} "
+                f"MAE={avg_mae:.3f} "
+                f"RMSE={avg_rmse:.3f} "
+            )
 
 
 if __name__ == "__main__":

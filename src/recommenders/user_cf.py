@@ -141,6 +141,81 @@ def find_similar_users_for_vector(
 
     return similar_users[:n_neighbors]
 
+def predict_ratings(
+    data: RecommenderData,
+    username: str,
+    film_indices: list[int],
+    n_neighbors: int = 50,
+    min_common_films: int = 20,
+    min_neighbor_ratings: int = 3,
+    smoothing: float = 5.0,
+) -> dict[int, float]:
+    if username not in data.user_to_idx:
+        raise ValueError(f"Unknown user: {username}")
+
+    user_idx = data.user_to_idx[username]
+    target = data.ratings[user_idx]
+
+    similar_users = find_similar_users_for_vector(
+        data=data,
+        target=target,
+        n_neighbors=n_neighbors,
+        min_common_films=min_common_films,
+    )
+
+    if not similar_users:
+        return {}
+
+    neighbor_indices = [
+        user["user_idx"] for user in similar_users
+    ]
+
+    similarities = np.array(
+        [user["similarity"] for user in similar_users],
+        dtype=np.float32,
+    )
+
+    neighbor_ratings = data.ratings[neighbor_indices]
+
+    weighted_sum = np.asarray(
+        neighbor_ratings.T @ similarities
+    ).ravel()
+
+    rated_mask = neighbor_ratings.copy()
+    rated_mask.data[:] = 1
+
+    similarity_sum = np.asarray(
+        rated_mask.T @ np.abs(similarities)
+    ).ravel()
+
+    rating_counts = np.asarray(
+        rated_mask.sum(axis=0)
+    ).ravel()
+
+    valid = (
+        (similarity_sum > 0)
+        & (rating_counts >= min_neighbor_ratings)
+    )
+
+    predicted = np.zeros(data.ratings.shape[1], dtype=np.float32)
+
+    predicted[valid] = (
+        weighted_sum[valid] / similarity_sum[valid]
+    )
+
+    user_mean = float(np.mean(target.data))
+
+    predicted[valid] = (
+        rating_counts[valid] * predicted[valid]
+        + smoothing * user_mean
+    ) / (rating_counts[valid] + smoothing)
+
+    return {
+        film_idx: float(predicted[film_idx])
+        for film_idx in film_indices
+        if valid[film_idx]
+    }
+
 def recommend(
         data: RecommenderData,
         username: str,
