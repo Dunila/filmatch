@@ -275,7 +275,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    evaluation_problem = "reg"
+    evaluation_problem = "ranking"
 
     if args.n_users < 1:
         raise ValueError("--n-users must be positive")
@@ -450,7 +450,6 @@ def main() -> None:
                 f"MAE={avg_mae:.3f} "
                 f"RMSE={avg_rmse:.3f} "
             )
-
 
 if __name__ == "__main__":
     main()

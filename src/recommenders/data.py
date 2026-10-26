@@ -30,6 +30,25 @@ def load_users(
         [row[0] for row in rows], dtype=str
     )
 
+def load_user_ratings(
+        conn: sqlite3.Connection,
+        username: str,
+        top_users_films: int = 25
+) -> np.ndarray:
+    rows = conn.execute(
+        f"""
+        SELECT film, rating
+        FROM Ratings
+        WHERE rating IS NOT NULL
+            AND user == "{username}"
+            AND film IS NOT NULL
+        ORDER BY rating DESC
+        LIMIT {top_users_films}
+        """
+    )
+    return [row for row in rows]
+
+
 def load_films(
         conn: sqlite3.Connection
 ) -> np.ndarray:

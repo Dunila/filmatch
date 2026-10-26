@@ -286,7 +286,7 @@ def recommend(
     target_values = target.data
     user_mean = float(np.mean(target_values))
 
-    smoothing = 5.0
+    smoothing = 2.5
 
     predicted = (
         rating_counts * predicted + smoothing * user_mean

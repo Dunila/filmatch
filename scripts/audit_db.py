@@ -17,6 +17,15 @@ def fetch_one(
 
     return result[0]
 
+def print_example(
+        conn: sqlite3.Connection,
+        head: int = 15
+) -> None:
+    c = conn.cursor()
+    c.execute(f"""SELECT * FROM Ratings LIMIT {head}""")
+    #c.execute(f"""SELECT * FROM Users LIMIT {head}""")
+    print(c.fetchmany())    
+
 def get_basic_stats(
         conn: sqlite3.Connection
 ) -> dict:
@@ -226,6 +235,13 @@ def main() -> None:
         print(f"Sparsity: {sparsity:.6f}%")
 
     print()
+
+    with sqlite3.connect(DB_PATH) as c:
+        print_example(c)
+
+def main1():
+    with sqlite3.connect(DB_PATH) as c:
+            print_example(c)
 
 if __name__ == "__main__":
     main()
