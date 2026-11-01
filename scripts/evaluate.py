@@ -3,11 +3,14 @@ from tqdm import tqdm
 import numpy as np
 import argparse
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+import pandas as pd
 
 from src.recommenders.data import (
     RecommenderData,
     load_cached_recommender_data,
 )
+from src.recommenders.film_similarity import *
+
 from src.recommenders.user_cf import recommend, predict_ratings
 from src.recommenders.als import ExplicitALS
 from src.evaluation.metrics import precision_at_k, recall_at_k, ndcg_at_k
@@ -51,13 +54,50 @@ def recommend_popular(
         if popularity[idx] > 0
     ]
 
+def prepare_content_data(data: RecommenderData):
+    original_df = pd.read_json("data/films.json")
+    columns = ["rating", "genres", "themes"]
+
+    df = prepare_films(
+        original_df[columns],
+        drop_obvious_features=False
+    )
+
+    df = df.fillna(df.mean())
+    df = standardize_films(df)
+    df = df.reset_index(drop=True)
+
+    film_matrix = build_film_matrix(df)
+
+    slug_to_content_idx = {
+        link.removeprefix("https://letterboxd.com/film/").rstrip("/"): idx 
+        for idx, link in enumerate(original_df["link"])
+        if isinstance(link, str)
+    }
+
+    cf_to_content_idx = {
+        idx: slug_to_content_idx[slug]
+        for idx, slug in enumerate(data.films)
+        if slug in slug_to_content_idx
+    }
+
+    content_to_cf_idx = {
+        content_idx: cf_idx 
+        for cf_idx, content_idx in cf_to_content_idx.items()
+    }
+
+    return film_matrix, cf_to_content_idx, content_to_cf_idx
+
 def evaluate_user(
     train_data: RecommenderData,
     user_idx: int,
     hidden_ratings: dict[int, float],
     evaluate_problem: str = "ranking", #or "reg"
     recommender: str = "cf",
-    als_model: ExplicitALS | None = None
+    als_model: ExplicitALS | None = None,
+    content_matrix=None,
+    cf_to_content_idx: dict[int, int] | None = None,
+    content_to_cf_idx: dict[int, int] | None = None
 ) -> dict:
 
     username = str(train_data.users[user_idx])
@@ -97,6 +137,28 @@ def evaluate_user(
                 ratings=train_data.ratings,
                 n_recommendations=TOP_K
             )
+
+        elif recommender == "content":
+            train_row = train_data.ratings[user_idx]
+
+            content_ratings = {
+                cf_to_content_idx[int(cf_idx)]: float(rating) for cf_idx, rating in zip(train_row.indices, train_row.data)
+                if int(cf_idx) in cf_to_content_idx
+            }
+
+            content_recommendations = recommend_from_ratings(
+                film_matrix=content_matrix,
+                ratings=content_ratings,
+                top_user_films=75,
+                n_neighbors=20,
+                n_recommendations=TOP_K
+            )
+
+            recommended_films = [
+                content_to_cf_idx[idx]
+                for idx in content_recommendations
+                if idx in content_to_cf_idx
+            ]
     
         else:
             raise ValueError(
@@ -266,7 +328,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--model",
-        choices=["cf", "popular", "als", "all"],
+        choices=["cf", "popular", "als", "content", "all"],
         default="all"
     )
 
@@ -285,7 +347,7 @@ def main() -> None:
     data = load_cached_recommender_data(CACHE_DIR)
 
     models = (
-        ["cf", "popular", "als"] if args.model == "all" else [args.model]
+        ["cf", "popular", "content", "als"] if args.model == "all" else [args.model]
     )
 
     if args.user is not None:
@@ -356,6 +418,16 @@ def main() -> None:
 
         als_model.fit(train_data.ratings)
 
+    content_matrix = None
+    cf_to_content_idx = None
+    content_to_cf_idx = None
+
+    if "content" in models:
+        (content_matrix, cf_to_content_idx, content_to_cf_idx) = prepare_content_data(train_data)
+
+        print("Content matrix shape:", content_matrix.shape)
+        print("Mapped films:", len(cf_to_content_idx))
+
     results = {
         model: [] for model in models
     }
@@ -372,7 +444,10 @@ def main() -> None:
                 hidden_ratings=hidden_ratings,
                 recommender=recommender,
                 als_model=als_model,
-                evaluate_problem=evaluation_problem
+                evaluate_problem=evaluation_problem,
+                content_matrix=content_matrix,
+                cf_to_content_idx=cf_to_content_idx,
+                content_to_cf_idx=content_to_cf_idx
             )
 
             results[recommender].append(result)

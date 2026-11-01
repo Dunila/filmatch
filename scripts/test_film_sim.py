@@ -12,6 +12,7 @@ COLUMNS = [
     "rating", "genres", "themes"
 ]
 
+
 def main():
     original_df = pd.read_json(DB_PATH)
 
@@ -52,11 +53,15 @@ def main():
     #     ).to_string(index=False)
     # )
 
-    print(recommend(
+    recs = recommend(
         original_df,
         film_matrix,
-        "xaxamlo"
-    ), sep="\n")
+        "xaxamlo",
+        top_user_films=50,
+        users_rating=9
+    )
+    for film_idx, sim in recs:
+        print(f"{film_idx} - {original_df.loc[film_idx, 'name']} ({original_df.loc[film_idx, 'year']}) - score: {sim}")
 
 
 

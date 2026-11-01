@@ -267,17 +267,24 @@ def build_film_matrix(
 def find_similar_films(
         film_idx: int,
         film_matrix: csr_matrix,
-        n_neighbors: int = 20
+        n_neighbors: int = 20,
+        ban_list: list = []
 ) -> list[dict]:
     target = film_matrix[film_idx]
+
+    if len(ban_list) >= 1:
+        indices = list(set(range(film_matrix.shape[0])).difference(set(ban_list)))
+        film_matrix = film_matrix[indices]
 
     similarities = (
         film_matrix @ target.T
     ).toarray().ravel()
 
+    first_index = 0 if len(ban_list) >= 1 else 1
+
     top_indices = np.argsort(
         similarities
-    )[::-1][1:n_neighbors + 1]
+    )[::-1][first_index:n_neighbors + first_index]
 
     return [{"film_idx": int(idx), "similarity": float(similarities[idx])} for idx in top_indices]
 
@@ -287,27 +294,59 @@ def recommend(
         username: str,
         top_user_films: int = 10,
         users_rating: int | None = None,
-        n_neighbors: int = 10
+        n_neighbors: int = 10,
+        n_recommendations: int = 10
 ) -> list[dict]:
 
     with sqlite3.Connection(DB_PATH) as conn:  
         films = load_user_ratings(
             conn,
-            username=username,
-            top_users_films=top_user_films
+            username=username
         )
 
-    result = {}
-    
-    for film, rating in films:
-        film_idx = dataframe_films[dataframe_films["link"] == f"https://letterboxd.com/film/{film}/"].index.item()
+       
+
+def recommend_from_ratings(
+    film_matrix: csr_matrix,
+    ratings: dict[int, float],
+    top_user_films: int = 50,
+    n_neighbors: int = 50,
+    n_recommendations: int = 20,
+) -> list[int]:
+
+    if not ratings:
+        return []
+
+    top_films = sorted(
+        ratings.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:top_user_films]
+
+    rated_films = set(ratings)
+    scores = {}
+
+    for film_idx, rating in top_films:
         neighbors = find_similar_films(
-            film_idx,
-            films_matrix,
-            n_neighbors=n_neighbors
+            film_idx=film_idx,
+            film_matrix=film_matrix,
+            n_neighbors=n_neighbors,
+            ban_list=list(rated_films)
         )
+
         for neighbor in neighbors:
-            result[neighbor["film_idx"]] = result.get(neighbor["film_idx"], 0) + neighbor["similarity"]*rating/10
-    return [k for k, v in sorted(result.items(), key=lambda item: item[1])]   
+            idx = neighbor["film_idx"]
 
+            scores[idx] = (
+                scores.get(idx, 0.0)
+                + neighbor["similarity"] * rating / 10
+            )
 
+    return [
+        idx
+        for idx, score in sorted(
+            scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:n_recommendations]
+    ]
